@@ -1,0 +1,22 @@
+# Chart Facts — Third-Party Notices
+
+## Swiss Ephemeris
+
+Copyright (C) Astrodienst AG, Zurich, Switzerland
+
+This software uses the Swiss Ephemeris library and ephemeris data files.
+Swiss Ephemeris is made available under a dual license:
+
+- GNU Affero General Public License (AGPL-3.0), or
+- Swiss Ephemeris Professional License (commercial)
+
+This project is distributed under AGPL-3.0. If you use Swiss Ephemeris in
+proprietary closed-source software without releasing source code, you must
+purchase a Professional License from Astrodienst AG.
+
+https://www.astro.com/swisseph/swephinfo_e.htm
+
+## pyswisseph
+
+Python bindings for Swiss Ephemeris.
+https://github.com/astrorigin/pyswisseph

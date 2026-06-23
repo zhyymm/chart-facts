@@ -1,0 +1,24 @@
+services:
+  l0:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chart-l0
+    restart: unless-stopped
+    expose:
+      - "8000"
+    ports:
+      # Bind localhost only — do not expose L0 to the public internet.
+      - "127.0.0.1:8000:8000"
+    environment:
+      EPHE_PATH: /app/ephe
+    volumes:
+      # Optional: override ephemeris files from host
+      - ./ephe:/app/ephe:ro
+    networks:
+      - chart-net
+
+networks:
+  chart-net:
+    name: chart-net
+    driver: bridge

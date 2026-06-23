@@ -1,0 +1,30 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Ephemeris data (download separately — see ephe/README.md)
+ephe/*.se1
+ephe/*.se2
+ephe/*.se3
+!ephe/.gitkeep
+!ephe/README.md
+
+# Build
+dist/
+*.egg-info/
+.build/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
