@@ -19,10 +19,7 @@ COPY src ./src
 # ⚡ 这次 gcc + g++ 双剑合璧，绝对能把二进制 wheel 编译下来
 RUN pip install --no-cache-dir .
 
-# Swiss Ephemeris data files (1800-2399 AD)
-RUN mkdir -p /app/ephe \
-    && curl -fsSL https://www.astro.com/ftp/swisseph/ephe/sepl_18.se1 -o /app/ephe/sepl_18.se1 \
-    && curl -fsSL https://www.astro.com/ftp/swisseph/ephe/semo_18.se1 -o /app/ephe/semo_18.se1
+
 
 ENV EPHE_PATH=/app/ephe
 ENV HOST=0.0.0.0
