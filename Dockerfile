@@ -13,7 +13,7 @@ RUN apt-get update \
         libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md VERSION ./
 COPY src ./src
 
 # ⚡ 这次 gcc + g++ 双剑合璧，绝对能把二进制 wheel 编译下来
