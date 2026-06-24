@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import swisseph as swe
@@ -28,6 +29,11 @@ from chart_facts.models import (
 _ephe_initialized = False
 _ephe_path: str | None = None
 
+_ISO_LOCAL = re.compile(
+    r"^(?P<year>-?\d{1,6})-(?P<month>\d{2})-(?P<day>\d{2})T"
+    r"(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})"
+)
+
 
 def init_ephemeris(ephe_path: str | None = None) -> str | None:
     """Configure Swiss Ephemeris data path once per process."""
@@ -40,29 +46,98 @@ def init_ephemeris(ephe_path: str | None = None) -> str | None:
         swe.set_ephe_path(path)
         _ephe_path = path
     else:
-        # Falls back to built-in Moshier ephemeris when files are absent.
         _ephe_path = None
 
     _ephe_initialized = True
     return _ephe_path
 
 
-def _parse_local_datetime(value: str, timezone: str) -> tuple[datetime, datetime]:
-    """Parse ISO local datetime and convert to UTC."""
+def _strip_offset(value: str) -> str:
     normalized = value.strip().replace("Z", "+00:00")
+    t_index = normalized.find("T")
+    if t_index < 0:
+        return normalized
+    tail = normalized[t_index:]
+    for sep in ("+", "-"):
+        idx = tail.find(sep, 1)
+        if idx > 0:
+            return normalized[: t_index + idx]
+    return normalized
+
+
+def _parse_iso_components(value: str) -> tuple[int, int, int, int, int, int]:
+    base = _strip_offset(value)
+    match = _ISO_LOCAL.match(base)
+    if not match:
+        raise ValueError(f"Invalid datetime '{value}'")
+    return (
+        int(match.group("year")),
+        int(match.group("month")),
+        int(match.group("day")),
+        int(match.group("hour")),
+        int(match.group("minute")),
+        int(match.group("second")),
+    )
+
+
+def _format_iso(year: int, month: int, day: int, hour: int, minute: int, second: int) -> str:
+    y = f"{year:04d}" if year >= 0 else f"-{abs(year):04d}"
+    return f"{y}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
+
+
+def _lmt_to_jd_ut(
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    second: int,
+    longitude: float,
+) -> float:
+    """Local Mean Time → Julian Day UT (east-positive longitude)."""
+    local_hour = hour + minute / 60 + second / 3600
+    ut_hour = local_hour - longitude / 15.0
+    return swe.julday(year, month, day, ut_hour)
+
+
+def _jd_ut_to_utc_datetime(jd_ut: float) -> datetime:
+    y, m, d, ut_hours = swe.revjul(jd_ut)
+    hour = int(ut_hours)
+    minute = int((ut_hours - hour) * 60)
+    second = int(round(((ut_hours - hour) * 60 - minute) * 60))
+    if 1 <= y <= 9999:
+        return datetime(y, m, d, hour, minute, second, tzinfo=timezone.utc)
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)  # placeholder; echo uses strings
+
+
+def _parse_local_datetime(
+    value: str,
+    timezone_name: str,
+    longitude: float,
+) -> tuple[str, datetime, float, bool]:
+    """Returns (local_iso, utc_dt, jd_ut, used_lmt)."""
+    year, month, day, hour, minute, second = _parse_iso_components(value)
+    local_iso = _format_iso(year, month, day, hour, minute, second)
+
+    if year < 1 or year > 9999:
+        jd_ut = _lmt_to_jd_ut(year, month, day, hour, minute, second, longitude)
+        utc_dt = _jd_ut_to_utc_datetime(jd_ut)
+        return local_iso, utc_dt, jd_ut, True
+
     try:
-        local = datetime.fromisoformat(normalized)
+        local = datetime.fromisoformat(local_iso)
     except ValueError as exc:
         raise ValueError(f"Invalid datetime '{value}': {exc}") from exc
 
-    tz = ZoneInfo(timezone)
+    tz = ZoneInfo(timezone_name)
     if local.tzinfo is None:
         local = local.replace(tzinfo=tz)
     else:
         local = local.astimezone(tz)
 
-    utc = local.astimezone(ZoneInfo("UTC"))
-    return local, utc
+    utc_dt = local.astimezone(ZoneInfo("UTC"))
+    jd_ut = _datetime_to_jd_ut(utc_dt)
+    return local.isoformat(), utc_dt, jd_ut, False
 
 
 def _datetime_to_jd_ut(dt_utc: datetime) -> float:
@@ -75,6 +150,14 @@ def _datetime_to_jd_ut(dt_utc: datetime) -> float:
     return swe.julday(dt_utc.year, dt_utc.month, dt_utc.day, hour)
 
 
+def _utc_iso_from_jd(jd_ut: float) -> str:
+    y, m, d, ut_hours = swe.revjul(jd_ut)
+    hour = int(ut_hours)
+    minute = int((ut_hours - hour) * 60)
+    second = int(round(((ut_hours - hour) * 60 - minute) * 60))
+    return _format_iso(y, m, d, hour, minute, second) + "+00:00"
+
+
 def _normalize_longitude(value: float) -> float:
     return value % 360.0
 
@@ -83,13 +166,15 @@ def compute_facts(request: FactsRequest) -> FactsResponse:
     """Compute chart facts for one birth event."""
     init_ephemeris()
 
-    local_dt, utc_dt = _parse_local_datetime(request.datetime, request.timezone)
-    jd_ut = _datetime_to_jd_ut(utc_dt)
+    local_text, utc_dt, jd_ut, used_lmt = _parse_local_datetime(
+        request.datetime,
+        request.timezone,
+        request.longitude,
+    )
 
     hsys = HOUSE_SYSTEMS[request.house_system]
     cusps, ascmc = swe.houses(jd_ut, request.latitude, request.longitude, hsys)
 
-    # pyswisseph >= 2.10 returns 12 cusps (index 0 = house 1); older builds use index 1–12.
     if len(cusps) == 12:
         houses = [
             HouseCuspFacts(number=i + 1, cusp=_normalize_longitude(cusps[i]))
@@ -129,6 +214,9 @@ def compute_facts(request: FactsRequest) -> FactsResponse:
         polar_asc=_normalize_longitude(ascmc[7]),
     )
 
+    tz_label = "LMT" if used_lmt else request.timezone
+    utc_text = _utc_iso_from_jd(jd_ut) if used_lmt else utc_dt.isoformat()
+
     return FactsResponse(
         engine=EngineInfo(
             name=ENGINE_NAME,
@@ -136,9 +224,9 @@ def compute_facts(request: FactsRequest) -> FactsResponse:
             ephe_path=_ephe_path,
         ),
         input=InputEcho(
-            datetime_local=local_dt.isoformat(),
-            datetime_utc=utc_dt.isoformat(),
-            timezone=request.timezone,
+            datetime_local=local_text,
+            datetime_utc=utc_text,
+            timezone=tz_label,
             latitude=request.latitude,
             longitude=request.longitude,
             house_system=request.house_system,

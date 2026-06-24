@@ -78,3 +78,18 @@ def test_invalid_house_system():
             longitude=121.5,
             house_system="invalid_system",
         )
+
+
+def test_bce_date_uses_lmt():
+    """44 BCE (ISO -0043) — astronomical year -43, LMT from longitude."""
+    request = FactsRequest(
+        datetime="-0043-03-15T06:00:00",
+        timezone="Europe/Rome",
+        latitude=41.9,
+        longitude=12.5,
+        house_system="alcabitius",
+    )
+    result = compute_facts(request)
+    assert result.input.timezone == "LMT"
+    assert result.julian_day_ut > 0
+    assert len(result.bodies) >= 10
